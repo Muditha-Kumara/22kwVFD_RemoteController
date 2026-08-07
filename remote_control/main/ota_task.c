@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "display.h"
 #include "board.h"
+#include "espnow_link.h"
 #include "vfd_protocol.h"
 
 #define TAG "ota_r"
@@ -176,6 +177,9 @@ static void ota_task(void *arg)
 
     display_status("OTA CHECK...");
 
+    /* Keep the fallback channel scan away while we use wifi. */
+    espnow_link_scan_pause(true);
+
     /* Connect to wifi (wifi was initialized by espnow_link in STA mode). */
     s_eg = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
@@ -185,6 +189,8 @@ static void ota_task(void *arg)
     wifi_config_t wc = {0};
     strncpy((char *)wc.sta.ssid, cfg->wifi_ssid, sizeof(wc.sta.ssid) - 1);
     strncpy((char *)wc.sta.password, cfg->wifi_pass, sizeof(wc.sta.password) - 1);
+    /* Connect only on the configured channel. */
+    wc.sta.channel = cfg->wifi_channel;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     esp_wifi_connect();
 
@@ -195,6 +201,8 @@ static void ota_task(void *arg)
         ESP_LOGW(TAG, "wifi connect failed; skipping OTA");
         display_status("OTA: NO WIFI");
         esp_wifi_disconnect();
+        esp_wifi_set_channel(cfg->wifi_channel, WIFI_SECOND_CHAN_NONE);
+        espnow_link_scan_pause(false);
         vTaskDelete(NULL);
         return;
     }
@@ -235,7 +243,8 @@ static void ota_task(void *arg)
 
     /* Done: disconnect wifi, restore ESP-NOW channel, LR continues. */
     esp_wifi_disconnect();
-    esp_wifi_set_channel(BOARD_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_channel(cfg->wifi_channel, WIFI_SECOND_CHAN_NONE);
+    espnow_link_scan_pause(false);
     ESP_LOGI(TAG, "OTA check done");
     vTaskDelete(NULL);
 }

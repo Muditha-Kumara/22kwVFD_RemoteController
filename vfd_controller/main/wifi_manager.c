@@ -86,6 +86,8 @@ static void wifi_task(void *arg)
     strncpy((char *)sta_cfg.sta.ssid, cfg->wifi_ssid, sizeof(sta_cfg.sta.ssid) - 1);
     strncpy((char *)sta_cfg.sta.password, cfg->wifi_pass, sizeof(sta_cfg.sta.password) - 1);
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    /* Connect ONLY on the configured channel (no all-channel scan). */
+    sta_cfg.sta.channel = cfg->wifi_channel;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
 
     /* Initial connect attempt. */

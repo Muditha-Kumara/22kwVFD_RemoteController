@@ -30,6 +30,10 @@ esp_err_t espnow_link_send(vfd_packet_type_t type,
 /** Latest heartbeat from remote (battery). */
 void espnow_link_get_remote_hb(vfd_heartbeat_t *out, bool *valid);
 
+/** Announce a channel switch to the remote on the CURRENT channel
+ *  (best effort, repeated). Call before rebooting onto the new channel. */
+void espnow_link_announce_channel(uint8_t new_channel);
+
 /** RX success ratio 0..100 for link quality display. */
 uint8_t espnow_link_quality(void);
 

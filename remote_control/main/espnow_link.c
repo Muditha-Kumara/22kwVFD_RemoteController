@@ -15,6 +15,7 @@
 #include "nvs.h"
 
 #include "board.h"
+#include "settings.h"
 
 #define TAG "espnow_r"
 
@@ -27,6 +28,10 @@ static struct {
     uint8_t  peer_mac[6];
     bool     peer_known;
     uint8_t  seq;
+    uint8_t  channel;           /* single channel for ESP-NOW         */
+    volatile bool scan_paused;  /* set while OTA wifi is active       */
+    volatile bool rx_any;       /* any valid controller packet seen   */
+    volatile uint8_t rx_channel;/* channel a valid packet arrived on  */
 
     /* latest telemetry */
     vfd_telemetry_t telem;
@@ -101,6 +106,88 @@ void espnow_link_on_telemetry(espnow_telemetry_cb_t cb)
     s_link.cb = cb;
 }
 
+void espnow_link_scan_pause(bool pause)
+{
+    s_link.scan_paused = pause;
+}
+
+uint8_t espnow_link_channel(void)
+{
+    return s_link.channel;
+}
+
+/* ------------------------------------------------------------------ */
+/* Switch the radio + peer to a new channel (runtime).                */
+/* ------------------------------------------------------------------ */
+static esp_err_t apply_channel(uint8_t ch)
+{
+    if (ch < 1 || ch > 13) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "set_channel(%d) failed: %s", ch, esp_err_to_name(err));
+        return err;
+    }
+    s_link.channel = ch;
+
+    /* Update peer channel if already known. */
+    if (s_link.peer_known && esp_now_is_peer_exist(s_link.peer_mac)) {
+        esp_now_peer_info_t p = {0};
+        if (esp_now_get_peer(s_link.peer_mac, &p) == ESP_OK) {
+            p.channel = ch;
+            esp_now_mod_peer(&p);
+        }
+    }
+    ESP_LOGI(TAG, "channel -> %d", ch);
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Fallback channel search: only if no controller packet arrives      */
+/* within 10 s of boot (e.g. controller channel was changed while     */
+/* this remote was powered off). Paused while OTA wifi is active.     */
+/* ------------------------------------------------------------------ */
+#define SCAN_GRACE_MS      10000
+#define SCAN_DWELL_MS      120
+#define SCAN_PASSES        3
+
+static void scan_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(SCAN_GRACE_MS));
+
+    for (int pass = 0; pass < SCAN_PASSES && !s_link.rx_any; pass++) {
+        if (s_link.scan_paused) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            pass--;                 /* don't count passes while OTA runs */
+            continue;
+        }
+        ESP_LOGI(TAG, "no controller traffic; scanning channels (pass %d)",
+                 pass + 1);
+        for (uint8_t ch = 1; ch <= 13 && !s_link.rx_any; ch++) {
+            if (s_link.scan_paused) {
+                break;
+            }
+            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+            s_link.channel = ch;
+            vTaskDelay(pdMS_TO_TICKS(SCAN_DWELL_MS));
+        }
+    }
+
+    if (s_link.rx_any) {
+        uint8_t found = s_link.rx_channel;
+        ESP_LOGI(TAG, "found controller on channel %d", found);
+        apply_channel(found);
+        settings_set_wifi_channel(found);
+    } else {
+        /* Give up; return to the configured channel. */
+        apply_channel(settings_get()->wifi_channel);
+        ESP_LOGW(TAG, "channel scan found nothing; back to ch %d",
+                 s_link.channel);
+    }
+    vTaskDelete(NULL);
+}
+
 /* ------------------------------------------------------------------ */
 esp_err_t espnow_link_set_peer(const uint8_t mac[6])
 {
@@ -113,7 +200,7 @@ esp_err_t espnow_link_set_peer(const uint8_t mac[6])
     /* (Re)add peer with LR rate config. */
     esp_now_peer_info_t p = {0};
     memcpy(p.peer_addr, mac, 6);
-    p.channel = BOARD_ESPNOW_CHANNEL;
+    p.channel = s_link.channel;
     p.ifidx   = WIFI_IF_STA;
     p.encrypt = false;
     if (!esp_now_is_peer_exist(mac)) {
@@ -155,6 +242,12 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         return;
     }
 
+    /* A valid controller packet arrived (used by fallback scan). */
+    s_link.rx_any = true;
+    if (info && info->rx_ctrl) {
+        s_link.rx_channel = (uint8_t)info->rx_ctrl->channel;
+    }
+
     /* Link quality accounting. */
     s_link.rx_ok++;
     if (s_link.seq_init) {
@@ -189,6 +282,20 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
     case VFD_PKT_EVENT:
         /* events are carried in telemetry.alarm; nothing extra needed */
         break;
+    case VFD_PKT_CHANNEL_SWITCH:
+        if (plen >= sizeof(vfd_channel_switch_t)) {
+            vfd_channel_switch_t cs;
+            memcpy(&cs, payload, sizeof(cs));
+            if (cs.channel >= 1 && cs.channel <= 13 &&
+                cs.channel != s_link.channel) {
+                ESP_LOGW(TAG, "channel switch request -> %d", cs.channel);
+                settings_set_wifi_channel(cs.channel);
+                /* ACK on the OLD channel so the controller hears it. */
+                send_raw(VFD_PKT_ACK, NULL, 0);
+                apply_channel(cs.channel);
+            }
+        }
+        break;
     default:
         break;
     }
@@ -207,6 +314,7 @@ esp_err_t espnow_link_init(void)
 {
     memset(&s_link, 0, sizeof(s_link));
     s_link.mux = xSemaphoreCreateMutex();
+    s_link.channel = settings_get()->wifi_channel;
 
     /* WiFi STA only (remote has no AP). */
     if (esp_netif_create_default_wifi_sta() == NULL) {
@@ -216,12 +324,22 @@ esp_err_t espnow_link_init(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    /* Allow channels 1..13 (default country "01" only allows 1..11). */
+    wifi_country_t country = {
+        .cc = "EU",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_MANUAL,
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_country(&country));
+
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     /* Pin channel + enable Long Range on STA. */
-    ESP_ERROR_CHECK(esp_wifi_set_channel(BOARD_ESPNOW_CHANNEL,
+    ESP_ERROR_CHECK(esp_wifi_set_channel(s_link.channel,
                                          WIFI_SECOND_CHAN_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_protocol(
         WIFI_IF_STA,
@@ -246,6 +364,10 @@ esp_err_t espnow_link_init(void)
         }
     }
 
-    ESP_LOGI(TAG, "remote esp-now LR ready (ch %d)", BOARD_ESPNOW_CHANNEL);
+    /* Fallback channel search in case the controller moved channels
+     * while this remote was powered off. */
+    xTaskCreate(scan_task, "ch_scan", 3072, NULL, 4, NULL);
+
+    ESP_LOGI(TAG, "remote esp-now LR ready (ch %d)", s_link.channel);
     return ESP_OK;
 }

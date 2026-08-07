@@ -19,6 +19,9 @@ typedef struct {
     char     wifi_ssid[33];
     char     wifi_pass[65];
 
+    /* Single WiFi channel for AP + STA + ESP-NOW (1..13). */
+    uint8_t  wifi_channel;
+
     /* Data endpoints */
     char     udp_ip[16];        /* live UDP broadcast target   */
     uint16_t udp_port;

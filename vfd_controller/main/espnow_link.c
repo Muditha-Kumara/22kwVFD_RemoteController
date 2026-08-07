@@ -14,10 +14,10 @@
 #include "nvs.h"
 
 #include "control_engine.h"
+#include "settings.h"
 
 #define TAG "espnow"
 
-#define ESPNOW_WIFI_CHANNEL   6
 #define ESPNOW_MAX_PKT        250
 #define TELEM_TIMER_PERIOD_US (VFD_TELEM_PERIOD_MS * 1000)
 #define NVS_NAMESPACE         "espnow"
@@ -28,6 +28,7 @@ static struct {
     uint8_t  peer_mac[6];
     bool     peer_known;
     uint8_t  seq;
+    uint8_t  channel;           /* single channel for AP+STA+ESP-NOW  */
     esp_timer_handle_t telem_timer;
 
     /* link quality */
@@ -149,7 +150,7 @@ esp_err_t espnow_link_set_peer(const uint8_t mac[6])
 
     esp_now_peer_info_t peer = {0};
     memcpy(peer.peer_addr, mac, 6);
-    peer.channel = ESPNOW_WIFI_CHANNEL;
+    peer.channel = s_link.channel;
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt = false;
 
@@ -190,6 +191,23 @@ esp_err_t espnow_link_set_peer(const uint8_t mac[6])
 }
 
 /* ------------------------------------------------------------------ */
+void espnow_link_announce_channel(uint8_t new_channel)
+{
+    if (!s_link.peer_known) {
+        ESP_LOGW(TAG, "no peer; cannot announce ch %d", new_channel);
+        return;
+    }
+    vfd_channel_switch_t cs = { .channel = new_channel };
+    /* Best effort: repeat on the current channel; the remote persists
+     * the new channel on first reception. */
+    for (int i = 0; i < 5; i++) {
+        send_raw(VFD_PKT_CHANNEL_SWITCH, &cs, sizeof(cs));
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_LOGI(TAG, "announced channel switch -> %d", new_channel);
+}
+
+/* ------------------------------------------------------------------ */
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                               int32_t id, void *data)
 {
@@ -199,6 +217,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 esp_err_t espnow_link_init(void)
 {
     memset(&s_link, 0, sizeof(s_link));
+    s_link.channel = settings_get()->wifi_channel;
 
     /* TCP/IP stack + default event loop (idempotent, may already exist). */
     esp_err_t nerr = esp_netif_init();
@@ -219,6 +238,16 @@ esp_err_t espnow_link_init(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    /* Allow channels 1..13 (default country "01" only allows 1..11). */
+    wifi_country_t country = {
+        .cc = "EU",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_MANUAL,
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_country(&country));
+
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -228,13 +257,13 @@ esp_err_t espnow_link_init(void)
     wifi_config_t ap_cfg = {0};
     snprintf((char *)ap_cfg.ap.ssid, sizeof(ap_cfg.ap.ssid), "VFD-CUT-22KW");
     ap_cfg.ap.ssid_len       = strlen((char *)ap_cfg.ap.ssid);
-    ap_cfg.ap.channel        = ESPNOW_WIFI_CHANNEL;
+    ap_cfg.ap.channel        = s_link.channel;
     ap_cfg.ap.authmode       = WIFI_AUTH_OPEN;
     ap_cfg.ap.max_connection = 4;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
 
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL,
+    ESP_ERROR_CHECK(esp_wifi_set_channel(s_link.channel,
                                          WIFI_SECOND_CHAN_NONE));
 
     /* Enable Long Range protocol on both interfaces (runtime). */
@@ -276,7 +305,7 @@ esp_err_t espnow_link_init(void)
     ESP_ERROR_CHECK(esp_timer_start_periodic(s_link.telem_timer,
                                              TELEM_TIMER_PERIOD_US));
 
-    ESP_LOGI(TAG, "esp-now LR link initialized (ch %d)", ESPNOW_WIFI_CHANNEL);
+    ESP_LOGI(TAG, "esp-now LR link initialized (ch %d)", s_link.channel);
     return ESP_OK;
 }
 

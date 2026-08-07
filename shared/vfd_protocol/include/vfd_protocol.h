@@ -59,6 +59,7 @@ typedef enum {
     VFD_PKT_CMD            = 0x20,  /* operator command               */
     VFD_PKT_TORQUE_SET     = 0x21,  /* encoder torque setpoint        */
     VFD_PKT_HEARTBEAT      = 0x22,  /* remote alive + battery         */
+    VFD_PKT_CHANNEL_SWITCH = 0x23,  /* controller: move to new channel*/
 
     /* bidirectional / OTA */
     VFD_PKT_OTA_HDR        = 0x30,  /* OTA handshake (magic/version)  */
@@ -184,6 +185,15 @@ typedef struct __attribute__((packed)) {
     uint8_t  battery_pct;       /* 0..100                             */
     uint8_t  flags;             /* bit0 charging                      */
 } vfd_heartbeat_t;
+
+/* ------------------------------------------------------------------ */
+/* Channel switch : controller -> remote (VFD_PKT_CHANNEL_SWITCH)      */
+/* ------------------------------------------------------------------ */
+
+typedef struct __attribute__((packed)) {
+    uint8_t channel;            /* new WiFi channel (1..13)           */
+    uint8_t reserved[3];
+} vfd_channel_switch_t;
 
 /* ------------------------------------------------------------------ */
 /* OTA handshake                                                       */

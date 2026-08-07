@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -66,7 +67,7 @@ static const char INDEX_HTML[] =
 "<div class='row'><span>Uptime</span><span id='up'>--</span></div>"
 "<div class='row'><span>Battery</span><span id='bat'>--</span></div></div></div>"
 "<div class='card' style='margin-top:12px'><b>Settings</b>"
-"<div>WiFi SSID <input id='ssid'> Pass <input id='pass' type='password'></div>"
+"<div>WiFi SSID <input id='ssid'> Pass <input id='pass' type='password'> Channel (1-13) <input id='wchan' style='width:60px' type='number' min='1' max='13'></div>"
 "<div>UDP IP <input id='udpip'> Port <input id='udpport' style='width:80px'></div>"
 "<div>Upload URL <input id='upurl' style='width:320px'></div>"
 "<div>OTA URL <input id='otaurl' style='width:320px'></div>"
@@ -76,7 +77,7 @@ static const char INDEX_HTML[] =
 "<script>"
 "function $(i){return document.getElementById(i)}"
 "function cmd(c){fetch('/api/cmd',{method:'POST',body:JSON.stringify({cmd:c,arg:0})})}"
-"function save(){fetch('/api/settings',{method:'POST',body:JSON.stringify({wifi_ssid:$('ssid').value,wifi_pass:$('pass').value,udp_ip:$('udpip').value,udp_port:+$('udpport').value,upload_url:$('upurl').value,ota_url:$('otaurl').value,vfd_addr_main:+$('am').value,vfd_addr_travel:+$('at').value,rs485_baud:+$('baud').value})}).then(r=>r.json()).then(j=>{$('saveok').textContent=j.ok?'Saved!':'Error'})}"
+"function save(){fetch('/api/settings',{method:'POST',body:JSON.stringify({wifi_ssid:$('ssid').value,wifi_pass:$('pass').value,wifi_channel:+$('wchan').value,udp_ip:$('udpip').value,udp_port:+$('udpport').value,upload_url:$('upurl').value,ota_url:$('otaurl').value,vfd_addr_main:+$('am').value,vfd_addr_travel:+$('at').value,rs485_baud:+$('baud').value})}).then(r=>r.json()).then(j=>{$('saveok').textContent=j.reboot?'Saved! Rebooting to new channel...':(j.ok?'Saved!':'Error')})}"
 "function loadlogs(){fetch('/api/logs').then(r=>r.json()).then(j=>{$('logs').textContent=j.lines.join('\\n')})}"
 "const ST=['IDLE','CONNECTING','READY','STARTING','CUTTING','FRESH_CUT','REVERSING','STOPPING','E-STOP','FAULT'];"
 "let ws;"
@@ -98,7 +99,7 @@ static const char INDEX_HTML[] =
 "$('up').textContent=Math.floor(d.uptime_ms/1000)+'s';};"
 "ws.onclose=()=>setTimeout(connect,2000);}"
 "connect();"
-"fetch('/api/settings').then(r=>r.json()).then(s=>{$('ssid').value=s.wifi_ssid;$('udpip').value=s.udp_ip;$('udpport').value=s.udp_port;$('upurl').value=s.upload_url;$('otaurl').value=s.ota_url;$('am').value=s.vfd_addr_main;$('at').value=s.vfd_addr_travel;$('baud').value=s.rs485_baud;});"
+"fetch('/api/settings').then(r=>r.json()).then(s=>{$('ssid').value=s.wifi_ssid;$('wchan').value=s.wifi_channel;$('udpip').value=s.udp_ip;$('udpport').value=s.udp_port;$('upurl').value=s.upload_url;$('otaurl').value=s.ota_url;$('am').value=s.vfd_addr_main;$('at').value=s.vfd_addr_travel;$('baud').value=s.rs485_baud;});"
 "</script></body></html>";
 
 /* ------------------------------------------------------------------ */
@@ -143,6 +144,7 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "wifi_ssid", s->wifi_ssid);
     cJSON_AddStringToObject(j, "wifi_pass", "");
+    cJSON_AddNumberToObject(j, "wifi_channel", s->wifi_channel);
     cJSON_AddStringToObject(j, "udp_ip", s->udp_ip);
     cJSON_AddNumberToObject(j, "udp_port", s->udp_port);
     cJSON_AddStringToObject(j, "upload_url", s->upload_url);
@@ -179,6 +181,16 @@ static esp_err_t settings_post(httpd_req_t *req)
         strncpy(s.wifi_ssid, it->valuestring, sizeof(s.wifi_ssid) - 1);
     if ((it = cJSON_GetObjectItem(j, "wifi_pass")) && cJSON_IsString(it) && it->valuestring[0])
         strncpy(s.wifi_pass, it->valuestring, sizeof(s.wifi_pass) - 1);
+    if ((it = cJSON_GetObjectItem(j, "wifi_channel")) && cJSON_IsNumber(it)) {
+        int ch = (int)it->valuedouble;
+        if (ch < 1 || ch > 13) {
+            cJSON_Delete(j);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                "wifi_channel must be 1..13");
+            return ESP_FAIL;
+        }
+        s.wifi_channel = (uint8_t)ch;
+    }
     if ((it = cJSON_GetObjectItem(j, "udp_ip")) && cJSON_IsString(it))
         strncpy(s.udp_ip, it->valuestring, sizeof(s.udp_ip) - 1);
     if ((it = cJSON_GetObjectItem(j, "udp_port")) && cJSON_IsNumber(it))
@@ -195,8 +207,37 @@ static esp_err_t settings_post(httpd_req_t *req)
         s.vfd_addr_travel = (uint8_t)it->valuedouble;
     cJSON_Delete(j);
 
+    /* Channel change requested? */
+    const app_settings_t *old = settings_get();
+    bool channel_changed = (s.wifi_channel != old->wifi_channel);
+
+    if (channel_changed) {
+        /* Never switch channel mid-cut. */
+        vfd_machine_state_t st = control_engine_get_state();
+        if (st == VFD_STATE_STARTING || st == VFD_STATE_CUTTING ||
+            st == VFD_STATE_FRESH_CUT || st == VFD_STATE_REVERSING ||
+            st == VFD_STATE_STOPPING) {
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_sendstr(req,
+                "{\"ok\":false,\"error\":\"cutting active\"}");
+            return ESP_OK;
+        }
+    }
+
     esp_err_t err = settings_save(&s);
     httpd_resp_set_type(req, "application/json");
+
+    if (err == ESP_OK && channel_changed) {
+        httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+        ESP_LOGW(TAG, "channel change %d -> %d; rebooting",
+                 old->wifi_channel, s.wifi_channel);
+        /* Tell the remote on the CURRENT channel, then reboot. */
+        espnow_link_announce_channel(s.wifi_channel);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        /* not reached */
+    }
+
     httpd_resp_sendstr(req, err == ESP_OK ? "{\"ok\":true}" : "{\"ok\":false}");
     return ESP_OK;
 }

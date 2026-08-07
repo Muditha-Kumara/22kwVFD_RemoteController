@@ -14,6 +14,7 @@ static void settings_defaults(app_settings_t *s)
     memset(s, 0, sizeof(*s));
     strcpy(s->wifi_ssid, "SLEngineers");
     strcpy(s->wifi_pass, "slengnet1");
+    s->wifi_channel = 13;
     strcpy(s->udp_ip, "192.168.1.101");
     s->udp_port = 5005;
     strcpy(s->upload_url, "http://192.168.1.101:8080/upload");
@@ -56,6 +57,7 @@ esp_err_t settings_load(app_settings_t *out)
     if (err == ESP_OK) {
         LOAD_STR("wifi_ssid", wifi_ssid);
         LOAD_STR("wifi_pass", wifi_pass);
+        LOAD_U8("wifi_chan", wifi_channel);
         LOAD_STR("udp_ip", udp_ip);
         LOAD_U16("udp_port", udp_port);
         LOAD_STR("upload_url", upload_url);
@@ -66,6 +68,11 @@ esp_err_t settings_load(app_settings_t *out)
         LOAD_U16("batt_full", batt_full_mv);
         LOAD_U16("batt_empty", batt_empty_mv);
         nvs_close(h);
+    }
+
+    /* Sanitize channel. */
+    if (s->wifi_channel < 1 || s->wifi_channel > 13) {
+        s->wifi_channel = 13;
     }
 
     s_loaded = true;
@@ -87,6 +94,7 @@ esp_err_t settings_save(const app_settings_t *s)
     }
     nvs_set_str(h, "wifi_ssid", s->wifi_ssid);
     nvs_set_str(h, "wifi_pass", s->wifi_pass);
+    nvs_set_u8(h, "wifi_chan", s->wifi_channel);
     nvs_set_str(h, "udp_ip", s->udp_ip);
     nvs_set_u16(h, "udp_port", s->udp_port);
     nvs_set_str(h, "upload_url", s->upload_url);

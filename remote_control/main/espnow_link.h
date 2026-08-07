@@ -42,6 +42,12 @@ uint8_t espnow_link_quality(void);
 typedef void (*espnow_telemetry_cb_t)(const vfd_telemetry_t *t);
 void espnow_link_on_telemetry(espnow_telemetry_cb_t cb);
 
+/** Pause/resume the fallback channel scan (used while OTA wifi runs). */
+void espnow_link_scan_pause(bool pause);
+
+/** Current ESP-NOW channel. */
+uint8_t espnow_link_channel(void);
+
 #ifdef __cplusplus
 }
 #endif

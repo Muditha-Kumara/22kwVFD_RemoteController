@@ -43,6 +43,3 @@
 /* ---------------- Battery ------------------------------------- */
 #define BOARD_BATT_ADC          0          /* ADC1_CH0 */
 #define BOARD_BATT_DIV_NUM      2          /* divider ratio: Vbatt/2 */
-
-/* ---------------- Defaults ------------------------------------ */
-#define BOARD_ESPNOW_CHANNEL    6          /* must match controller */
