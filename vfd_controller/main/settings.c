@@ -12,8 +12,8 @@ static bool s_loaded;
 static void settings_defaults(app_settings_t *s)
 {
     memset(s, 0, sizeof(*s));
-    strcpy(s->wifi_ssid, "");
-    strcpy(s->wifi_pass, "");
+    strcpy(s->wifi_ssid, "SLEngineers");
+    strcpy(s->wifi_pass, "slengnet1");
     strcpy(s->udp_ip, "192.168.1.101");
     s->udp_port = 5005;
     strcpy(s->upload_url, "http://192.168.1.101:8080/upload");

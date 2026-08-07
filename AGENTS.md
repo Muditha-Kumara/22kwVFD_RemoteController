@@ -54,6 +54,8 @@ token usage.
   kconfig `CONFIG_LV_USE_BUTTON`.
 - Task WDT kconfig: `CONFIG_ESP_TASK_WDT_EN` / `CONFIG_ESP_TASK_WDT_PANIC`
   (not `CONFIG_FREERTOS_*_TASK_WDT`).
+- `uart_driver_install`: `rx_buffer_size` must be **greater than** the HW
+  FIFO length (128 on ESP32-S3), else `ESP_FAIL`. Use ≥ 256.
 
 ## Hardware map
 

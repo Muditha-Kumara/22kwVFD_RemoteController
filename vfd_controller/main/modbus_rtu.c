@@ -62,8 +62,9 @@ modbus_bus_t *modbus_bus_init(const modbus_bus_config_t *cfg)
         default:  ucfg.parity = UART_PARITY_DISABLE; break;
     }
 
+    /* both buffers must exceed the HW FIFO length (128 on ESP32-S3) */
     ESP_ERROR_CHECK(uart_driver_install(cfg->uart_num,
-                                        MB_MAX_FRAME * 2, MB_MAX_FRAME * 2,
+                                        MB_MAX_FRAME * 4, MB_MAX_FRAME * 4,
                                         0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(cfg->uart_num, &ucfg));
     ESP_ERROR_CHECK(uart_set_pin(cfg->uart_num, cfg->tx_io, cfg->rx_io,

@@ -200,6 +200,16 @@ esp_err_t espnow_link_init(void)
 {
     memset(&s_link, 0, sizeof(s_link));
 
+    /* TCP/IP stack + default event loop (idempotent, may already exist). */
+    esp_err_t nerr = esp_netif_init();
+    if (nerr != ESP_OK && nerr != ESP_ERR_INVALID_STATE) {
+        return nerr;
+    }
+    esp_err_t lerr = esp_event_loop_create_default();
+    if (lerr != ESP_OK && lerr != ESP_ERR_INVALID_STATE) {
+        return lerr;
+    }
+
     /* WiFi: AP + STA on the same channel. */
     if (esp_netif_create_default_wifi_sta() == NULL ||
         esp_netif_create_default_wifi_ap() == NULL) {
