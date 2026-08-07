@@ -14,10 +14,10 @@ static void settings_defaults(app_settings_t *s)
     memset(s, 0, sizeof(*s));
     strcpy(s->wifi_ssid, "");
     strcpy(s->wifi_pass, "");
-    strcpy(s->udp_ip, "192.168.4.2");
+    strcpy(s->udp_ip, "192.168.1.101");
     s->udp_port = 5005;
     strcpy(s->upload_url, "http://192.168.1.101:8080/upload");
-    strcpy(s->ota_url, "http://192.168.4.2:8080/manifest.json");
+    strcpy(s->ota_url, "http://192.168.1.101:8080/manifest.json");
     s->rs485_baud     = 9600;
     s->vfd_addr_main   = 1;
     s->vfd_addr_travel = 2;

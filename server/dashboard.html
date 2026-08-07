@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>22kW VFD Cutter — Live Dashboard</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --muted: #71717a;
+            --accent: #3b82f6;
+            --green: #22c55e;
+            --red: #ef4444;
+            --yellow: #eab308;
+            --orange: #f97316;
+            --cyan: #06b6d4;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 16px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+        .header h1 span { color: var(--accent); }
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-badge.online { background: rgba(34,197,94,0.15); color: var(--green); }
+        .status-badge.offline { background: rgba(239,68,68,0.15); color: var(--red); }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .card-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card-title .icon { font-size: 14px; }
+
+        /* State display */
+        .state-display {
+            text-align: center;
+            padding: 20px 0;
+        }
+        .state-name {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 8px;
+        }
+        .state-idle { color: var(--muted); }
+        .state-ready { color: var(--cyan); }
+        .state-cutting { color: var(--green); }
+        .state-fault { color: var(--red); }
+        .state-estop { color: var(--red); animation: blink 0.5s infinite; }
+        .state-starting, .state-fresh_cut { color: var(--yellow); }
+        .state-stopping, .state-reversing { color: var(--orange); }
+        @keyframes blink { 50% { opacity: 0.3; } }
+
+        .alarm-text {
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .alarm-text.active { color: var(--red); font-weight: 600; }
+
+        /* Torque bars */
+        .motor-section { margin-bottom: 20px; }
+        .motor-section:last-child { margin-bottom: 0; }
+        .motor-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+        }
+        .motor-name {
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .motor-value {
+            font-size: 20px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .torque-bar-container {
+            position: relative;
+            height: 24px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+        .torque-bar {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.15s ease;
+            position: relative;
+        }
+        .torque-bar.main { background: linear-gradient(90deg, var(--accent), #60a5fa); }
+        .torque-bar.travel { background: linear-gradient(90deg, var(--cyan), #22d3ee); }
+        .torque-bar.setpoint {
+            position: absolute;
+            top: 0; right: 0;
+            height: 100%;
+            width: 2px;
+            background: var(--yellow);
+            opacity: 0.8;
+        }
+        .motor-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            font-size: 11px;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+        .stat-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+        /* Metrics grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        .metric {
+            padding: 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+        }
+        .metric-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--muted);
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .metric-value {
+            font-size: 22px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .metric-unit {
+            font-size: 11px;
+            color: var(--muted);
+            margin-left: 4px;
+        }
+
+        /* Link quality */
+        .link-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .link-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .link-good { background: var(--green); }
+        .link-ok { background: var(--yellow); }
+        .link-bad { background: var(--red); }
+
+        /* Chart */
+        .chart-container {
+            position: relative;
+            height: 200px;
+            margin-top: 12px;
+        }
+        canvas { width: 100%; height: 100%; }
+
+        /* Footer */
+        .footer {
+            margin-top: 16px;
+            padding: 12px 20px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .wide-card { grid-column: 1 / -1; }
+
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+            .wide-card { grid-column: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>22kW</span> Diamond Wire Cutter</h1>
+        <div id="statusBadge" class="status-badge offline">
+            <div class="status-dot"></div>
+            <span id="statusText">OFFLINE</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Machine State -->
+        <div class="card">
+            <div class="card-title"><span class="icon">⚙</span> Machine State</div>
+            <div class="state-display">
+                <div id="stateName" class="state-name state-idle">IDLE</div>
+                <div id="alarmText" class="alarm-text">No alarms</div>
+            </div>
+        </div>
+
+        <!-- Cutting Metrics -->
+        <div class="card">
+            <div class="card-title"><span class="icon">📊</span> Cutting Metrics</div>
+            <div class="metrics-grid">
+                <div class="metric">
+                    <div class="metric-label">Wire Tension</div>
+                    <div class="metric-value"><span id="tension">0</span><span class="metric-unit">raw</span></div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Cut Depth</div>
+                    <div class="metric-value"><span id="depth">0.0</span><span class="metric-unit">mm</span></div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Link Quality</div>
+                    <div class="metric-value"><span id="linkQuality">0</span><span class="metric-unit">%</span></div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Uptime</div>
+                    <div class="metric-value"><span id="uptime">0</span><span class="metric-unit">s</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Motor (22kW) -->
+        <div class="card">
+            <div class="card-title"><span class="icon">⚡</span> Main Motor — 22kW</div>
+            <div class="motor-section">
+                <div class="motor-label">
+                    <span class="motor-name">Torque</span>
+                    <span class="motor-value"><span id="mainTorque">0.0</span>%</span>
+                </div>
+                <div class="torque-bar-container">
+                    <div id="mainTorqueBar" class="torque-bar main" style="width: 0%"></div>
+                </div>
+                <div class="motor-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Setpoint</span>
+                        <span class="stat-value"><span id="mainTorqueSet">0.0</span>%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Frequency</span>
+                        <span class="stat-value"><span id="mainFreq">0.0</span> Hz</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Current</span>
+                        <span class="stat-value"><span id="mainCurrent">0.0</span> A</span>
+                    </div>
+                </div>
+                <div class="motor-stats" style="margin-top: 8px;">
+                    <div class="stat-item">
+                        <span class="stat-label">Bus Voltage</span>
+                        <span class="stat-value"><span id="mainBusV">0</span> V</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Fault Code</span>
+                        <span class="stat-value" id="mainFault">0x0000</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Travel Motor -->
+        <div class="card">
+            <div class="card-title"><span class="icon">🔄</span> Travel Motor</div>
+            <div class="motor-section">
+                <div class="motor-label">
+                    <span class="motor-name">Torque</span>
+                    <span class="motor-value"><span id="travelTorque">0.0</span>%</span>
+                </div>
+                <div class="torque-bar-container">
+                    <div id="travelTorqueBar" class="torque-bar travel" style="width: 0%"></div>
+                </div>
+                <div class="motor-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Setpoint</span>
+                        <span class="stat-value"><span id="travelTorqueSet">0.0</span>%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Frequency</span>
+                        <span class="stat-value"><span id="travelFreq">0.0</span> Hz</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Current</span>
+                        <span class="stat-value"><span id="travelCurrent">0.0</span> A</span>
+                    </div>
+                </div>
+                <div class="motor-stats" style="margin-top: 8px;">
+                    <div class="stat-item">
+                        <span class="stat-label">Fault Code</span>
+                        <span class="stat-value" id="travelFault">0x0000</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Torque History Chart -->
+        <div class="card wide-card">
+            <div class="card-title"><span class="icon">📈</span> Torque History (last 60s)</div>
+            <div class="chart-container">
+                <canvas id="torqueChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <span>Server: 192.168.1.101:8080</span>
+        <span>UDP: port 5005</span>
+        <span id="lastUpdate">Last update: —</span>
+    </div>
+
+    <script>
+        const POLL_INTERVAL = 200; // ms
+        const CHART_POINTS = 300; // 60s at 10Hz
+        let chartData = { main: [], travel: [], timestamps: [] };
+
+        // State color mapping
+        const stateColors = {
+            'IDLE': 'state-idle',
+            'CONNECTING': 'state-idle',
+            'READY': 'state-ready',
+            'STARTING': 'state-starting',
+            'CUTTING': 'state-cutting',
+            'FRESH_CUT': 'state-fresh_cut',
+            'REVERSING': 'state-reversing',
+            'STOPPING': 'state-stopping',
+            'ESTOP': 'state-estop',
+            'FAULT': 'state-fault',
+        };
+
+        function updateDashboard(data) {
+            const badge = document.getElementById('statusBadge');
+            const statusText = document.getElementById('statusText');
+
+            if (data.status === 'online' && data.telemetry) {
+                badge.className = 'status-badge online';
+                statusText.textContent = 'ONLINE';
+                updateTelemetry(data.telemetry);
+
+                const age = data.age_seconds.toFixed(1);
+                document.getElementById('lastUpdate').textContent = `Last update: ${age}s ago`;
+            } else {
+                badge.className = 'status-badge offline';
+                statusText.textContent = 'OFFLINE';
+                document.getElementById('lastUpdate').textContent = 'Last update: —';
+            }
+        }
+
+        function updateTelemetry(t) {
+            // Machine state
+            const stateEl = document.getElementById('stateName');
+            stateEl.textContent = t.machine_state_str;
+            stateEl.className = 'state-name ' + (stateColors[t.machine_state_str] || 'state-idle');
+
+            // Alarm
+            const alarmEl = document.getElementById('alarmText');
+            if (t.alarm_str && t.alarm_str !== 'NONE') {
+                alarmEl.textContent = '⚠ ' + t.alarm_str;
+                alarmEl.className = 'alarm-text active';
+            } else {
+                alarmEl.textContent = 'No alarms';
+                alarmEl.className = 'alarm-text';
+            }
+
+            // Main motor
+            document.getElementById('mainTorque').textContent = t.main_torque_pct.toFixed(1);
+            document.getElementById('mainTorqueSet').textContent = t.main_torque_set.toFixed(1);
+            document.getElementById('mainFreq').textContent = t.main_freq_hz.toFixed(1);
+            document.getElementById('mainCurrent').textContent = t.main_current_a.toFixed(1);
+            document.getElementById('mainBusV').textContent = t.main_bus_v;
+            document.getElementById('mainFault').textContent = '0x' + t.fault_code_main.toString(16).toUpperCase().padStart(4, '0');
+
+            const mainBarPct = Math.min(Math.abs(t.main_torque_pct), 100);
+            document.getElementById('mainTorqueBar').style.width = mainBarPct + '%';
+
+            // Travel motor
+            document.getElementById('travelTorque').textContent = t.travel_torque_pct.toFixed(1);
+            document.getElementById('travelTorqueSet').textContent = t.travel_torque_set.toFixed(1);
+            document.getElementById('travelFreq').textContent = t.travel_freq_hz.toFixed(1);
+            document.getElementById('travelCurrent').textContent = t.travel_current_a.toFixed(1);
+            document.getElementById('travelFault').textContent = '0x' + t.fault_code_travel.toString(16).toUpperCase().padStart(4, '0');
+
+            const travelBarPct = Math.min(Math.abs(t.travel_torque_pct), 100);
+            document.getElementById('travelTorqueBar').style.width = travelBarPct + '%';
+
+            // Cutting metrics
+            document.getElementById('tension').textContent = t.wire_tension_raw;
+            document.getElementById('depth').textContent = t.cut_depth_mm.toFixed(1);
+            document.getElementById('linkQuality').textContent = t.link_quality;
+            document.getElementById('uptime').textContent = (t.uptime_ms / 1000).toFixed(0);
+
+            // Update chart data
+            chartData.main.push(t.main_torque_pct);
+            chartData.travel.push(t.travel_torque_pct);
+            chartData.timestamps.push(Date.now());
+            if (chartData.main.length > CHART_POINTS) {
+                chartData.main.shift();
+                chartData.travel.shift();
+                chartData.timestamps.shift();
+            }
+            drawChart();
+        }
+
+        function drawChart() {
+            const canvas = document.getElementById('torqueChart');
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+
+            canvas.width = canvas.offsetWidth * dpr;
+            canvas.height = canvas.offsetHeight * dpr;
+            ctx.scale(dpr, dpr);
+
+            const w = canvas.offsetWidth;
+            const h = canvas.offsetHeight;
+            const pad = { top: 10, right: 10, bottom: 25, left: 45 };
+            const plotW = w - pad.left - pad.right;
+            const plotH = h - pad.top - pad.bottom;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = pad.top + (plotH / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(w - pad.right, y);
+                ctx.stroke();
+            }
+
+            // Y-axis labels
+            ctx.fillStyle = '#71717a';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= 4; i++) {
+                const val = 100 - (i * 50);
+                const y = pad.top + (plotH / 4) * i;
+                ctx.fillText(val + '%', pad.left - 6, y + 3);
+            }
+
+            if (chartData.main.length < 2) return;
+
+            // Draw lines
+            function drawLine(data, color) {
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                for (let i = 0; i < data.length; i++) {
+                    const x = pad.left + (i / (CHART_POINTS - 1)) * plotW;
+                    const val = Math.max(-100, Math.min(100, data[i]));
+                    const y = pad.top + plotH - ((val + 100) / 200) * plotH;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            drawLine(chartData.main, '#3b82f6');
+            drawLine(chartData.travel, '#06b6d4');
+
+            // Legend
+            ctx.font = '11px monospace';
+            ctx.fillStyle = '#3b82f6';
+            ctx.textAlign = 'left';
+            ctx.fillText('● Main', pad.left + 10, h - 6);
+            ctx.fillStyle = '#06b6d4';
+            ctx.fillText('● Travel', pad.left + 80, h - 6);
+        }
+
+        async function poll() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                updateDashboard(data);
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        }
+
+        // Start polling
+        setInterval(poll, POLL_INTERVAL);
+        poll();
+
+        // Resize handler
+        window.addEventListener('resize', drawChart);
+    </script>
+</body>
+</html>
