@@ -1,0 +1,38 @@
+# vfd_controller main component
+idf_component_register(
+    SRCS
+        "main.c"
+        "settings.c"
+        "modbus_rtu.c"
+        "vfd_zuked720.c"
+        "vfd_sf100.c"
+        "control_engine.c"
+        "espnow_link.c"
+        "wifi_manager.c"
+        "web_server.c"
+        "data_log.c"
+        "udp_broadcast.c"
+        "upload_task.c"
+        "ota_task.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        vfd_protocol
+        sys_logger
+        driver
+        esp_driver_uart
+        esp_driver_gpio
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
+        esp_http_server
+        esp_http_client
+        esp_timer
+        vfs
+        fatfs
+        wear_levelling
+        app_update
+        esp_app_format
+        esp_partition
+        lwip
+)

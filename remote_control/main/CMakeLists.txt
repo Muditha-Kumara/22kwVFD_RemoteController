@@ -1,0 +1,32 @@
+# remote_control main component (handheld ESP32)
+idf_component_register(
+    SRCS
+        "main.c"
+        "settings.c"
+        "espnow_link.c"
+        "input.c"
+        "display.c"
+        "control_logic.c"
+        "ota_task.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        vfd_protocol
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
+        esp_http_client
+        esp_timer
+        esp_lcd
+        esp_driver_gpio
+        esp_driver_pcnt
+        esp_driver_spi
+        esp_adc
+        vfs
+        fatfs
+        app_update
+        esp_app_format
+        esp_partition
+        lwip
+        esp_rom
+)
